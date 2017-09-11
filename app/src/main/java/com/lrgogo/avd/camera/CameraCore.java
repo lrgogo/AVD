@@ -1,28 +1,51 @@
-package com.lrgogo.avd.util;
+package com.lrgogo.avd.camera;
 
 import android.app.Activity;
+import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.util.Log;
 import android.view.Surface;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
  * Created by Administrator on 2017/9/11.
  */
 
-public class CameraUtils {
+public class CameraCore {
 
-    private static final String TAG = "CameraUtils";
+    private static final String TAG = "CameraCore";
 
-    public static class CameraInitResult {
-        public Camera camera;
-        public int cameraId;
-        public int thousandFps;
+    Camera mCamera;
+    int mCameraPreviewThousandFps;
+    int mCameraId;
+
+    public void startPreview(SurfaceTexture texture) {
+        Log.d(TAG, "starting camera preview");
+        try {
+            mCamera.setPreviewTexture(texture);
+        } catch (IOException ioe) {
+            throw new RuntimeException(ioe);
+        }
+        mCamera.startPreview();
     }
 
-    public static CameraInitResult initCamera(int desiredWidth, int desiredHeight, int desiredFps) {
-        CameraInitResult result = new CameraInitResult();
+    public void openCamera(Activity activity) {
+        initCamera(1280, 720, 20);
+        setCameraDisplayOrientation(activity);
+    }
+
+    public void releaseCamera() {
+        if (mCamera != null) {
+            mCamera.stopPreview();
+            mCamera.release();
+            mCamera = null;
+            Log.d(TAG, "releaseCamera -- done");
+        }
+    }
+
+    private void initCamera(int desiredWidth, int desiredHeight, int desiredFps) {
         Camera.CameraInfo info = new Camera.CameraInfo();
 
         // Try to find a front-facing camera (e.g. for videoconferencing).
@@ -30,36 +53,49 @@ public class CameraUtils {
         for (int i = 0; i < numCameras; i++) {
             Camera.getCameraInfo(i, info);
             if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
-                result.camera = Camera.open(i);
-                result.cameraId = i;
+                mCamera = Camera.open(i);
+                mCameraId = i;
                 break;
             }
         }
-        if (result.camera == null) {
+        if (mCamera == null) {
             Log.d(TAG, "No front-facing camera found; opening default");
-            result.camera = Camera.open();    // opens first back-facing camera
+            mCamera = Camera.open();    // opens first back-facing camera
         }
-        if (result.camera == null) {
+        if (mCamera == null) {
             throw new RuntimeException("Unable to open camera");
         }
 
-        Camera.Parameters parms = result.camera.getParameters();
+        Camera.Parameters parms = mCamera.getParameters();
 
         choosePreviewSize(parms, desiredWidth, desiredHeight);
 
         // Try to set the frame rate to a constant value.
-        int thousandFps = CameraUtils.chooseFixedPreviewFps(parms, desiredFps * 1000);
-        result.thousandFps = thousandFps;
+        mCameraPreviewThousandFps = chooseFixedPreviewFps(parms, desiredFps * 1000);
         // Give the camera a hint that we're recording video.  This can have a big
         // impact on frame rate.
         parms.setRecordingHint(true);
 
-        result.camera.setParameters(parms);
-
-        return result;
+        mCamera.setParameters(parms);
     }
 
-    public static void choosePreviewSize(Camera.Parameters parms, int width, int height) {
+    private void autoFocus() {
+        // Make sure our auto settings aren't locked
+        Camera.Parameters params = mCamera.getParameters();
+        if (params.isAutoExposureLockSupported()) {
+            params.setAutoExposureLock(false);
+        }
+
+        if (params.isAutoWhiteBalanceLockSupported()) {
+            params.setAutoWhiteBalanceLock(false);
+        }
+
+        mCamera.setParameters(params);
+        mCamera.cancelAutoFocus();
+        mCamera.autoFocus(null);
+    }
+
+    private void choosePreviewSize(Camera.Parameters parms, int width, int height) {
         // We should make sure that the requested MPEG size is less than the preferred
         // size, and has the same aspect ratio.
         Camera.Size ppsfv = parms.getPreferredPreviewSizeForVideo();
@@ -86,7 +122,7 @@ public class CameraUtils {
         // else use whatever the default size is
     }
 
-    public static int chooseFixedPreviewFps(Camera.Parameters parms, int desiredThousandFps) {
+    private int chooseFixedPreviewFps(Camera.Parameters parms, int desiredThousandFps) {
         List<int[]> supported = parms.getSupportedPreviewFpsRange();
 
         for (int[] entry : supported) {
@@ -110,9 +146,9 @@ public class CameraUtils {
         return guess;
     }
 
-    public static void setCameraDisplayOrientation(Activity activity, int cameraId, Camera camera) {
+    private void setCameraDisplayOrientation(Activity activity) {
         Camera.CameraInfo info = new Camera.CameraInfo();
-        Camera.getCameraInfo(cameraId, info);
+        Camera.getCameraInfo(mCameraId, info);
         int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
         int degress = 0;
         switch (rotation) {
@@ -136,7 +172,6 @@ public class CameraUtils {
         } else {
             result = (info.orientation - degress + 360) % 360;
         }
-        camera.setDisplayOrientation(result);
+        mCamera.setDisplayOrientation(result);
     }
-
 }

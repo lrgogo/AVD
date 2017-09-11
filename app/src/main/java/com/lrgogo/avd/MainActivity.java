@@ -2,7 +2,6 @@ package com.lrgogo.avd;
 
 import android.Manifest;
 import android.graphics.SurfaceTexture;
-import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,13 +15,11 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.WindowManager;
 
+import com.lrgogo.avd.camera.CameraCore;
 import com.lrgogo.avd.gles.EglCore;
 import com.lrgogo.avd.gles.FullFrameRect;
 import com.lrgogo.avd.gles.Texture2dProgram;
 import com.lrgogo.avd.gles.WindowSurface;
-import com.lrgogo.avd.util.CameraUtils;
-
-import java.io.IOException;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
@@ -40,9 +37,6 @@ public class MainActivity extends AppCompatActivity {
     @BindView(R.id.surface_view)
     SurfaceView mSurfaceView;
 
-    Camera mCamera;
-    int mCameraPreviewThousandFps;
-
     EglCore mEglCore;
 
     WindowSurface mDisplaySurface;
@@ -52,6 +46,8 @@ public class MainActivity extends AppCompatActivity {
 
     FullFrameRect mFullFrameBlit;
     int mTextureId;
+
+    CameraCore mCamera;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,13 +78,7 @@ public class MainActivity extends AppCompatActivity {
             mCameraTexture = new SurfaceTexture(mTextureId);
             mCameraTexture.setOnFrameAvailableListener(mFrameAvailableListener);
 
-            Log.d(TAG, "starting camera preview");
-            try {
-                mCamera.setPreviewTexture(mCameraTexture);
-            } catch (IOException ioe) {
-                throw new RuntimeException(ioe);
-            }
-            mCamera.startPreview();
+            mCamera.startPreview(mCameraTexture);
         }
 
         @Override
@@ -120,16 +110,15 @@ public class MainActivity extends AppCompatActivity {
         if (mCamera != null) {
             throw new RuntimeException("camera already initialized");
         }
-        CameraUtils.CameraInitResult result = CameraUtils.initCamera(1280, 720, 20);
-        mCamera = result.camera;
-        mCameraPreviewThousandFps = result.thousandFps;
-        CameraUtils.setCameraDisplayOrientation(this, result.cameraId, result.camera);
+        mCamera = new CameraCore();
+        mCamera.openCamera(this);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        releaseCamera();
+        mCamera.releaseCamera();
+        mCamera = null;
 
         if (mCameraTexture != null) {
             mCameraTexture.release();
@@ -149,14 +138,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    void releaseCamera() {
-        if (mCamera != null) {
-            mCamera.stopPreview();
-            mCamera.release();
-            mCamera = null;
-            Log.d(TAG, "releaseCamera -- done");
-        }
-    }
 
     Handler mHandler = new Handler(Looper.getMainLooper()) {
         @Override
