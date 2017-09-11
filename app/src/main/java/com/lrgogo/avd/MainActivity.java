@@ -2,9 +2,11 @@ package com.lrgogo.avd;
 
 import android.Manifest;
 import android.graphics.SurfaceTexture;
+import android.opengl.EGL14;
 import android.opengl.GLES20;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -13,16 +15,22 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 
 import com.lrgogo.avd.camera.CameraCore;
 import com.lrgogo.avd.gles.EglCore;
 import com.lrgogo.avd.gles.FullFrameRect;
 import com.lrgogo.avd.gles.Texture2dProgram;
 import com.lrgogo.avd.gles.WindowSurface;
+import com.lrgogo.avd.video.TextureMovieEncoder;
+
+import java.io.File;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import butterknife.OnClick;
 import permissions.dispatcher.NeedsPermission;
 import permissions.dispatcher.RuntimePermissions;
 
@@ -33,6 +41,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
 
     private static final int MSG_FRAME_AVAILABLE = 1;
+
+    private static final int RECORDING_OFF = 0;
+    private static final int RECORDING_ON = 1;
+    private static final int RECORDING_RESUMED = 2;
 
     @BindView(R.id.surface_view)
     SurfaceView mSurfaceView;
@@ -49,6 +61,16 @@ public class MainActivity extends AppCompatActivity {
 
     CameraCore mCamera;
 
+    int mRecordingStatus;
+    boolean mRecordingEnabled;
+
+    private static TextureMovieEncoder sVideoEncoder = new TextureMovieEncoder();
+
+    @BindView(R.id.btn_toggle)
+    Button mToggleBtn;
+
+    File mOutputFile;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -58,11 +80,15 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         ButterKnife.bind(this);
         initView();
+        mOutputFile = new File(Environment.getExternalStorageDirectory(), "avd_video.mp4");
     }
 
     void initView() {
         SurfaceHolder holder = mSurfaceView.getHolder();
         holder.addCallback(mCallback);
+
+        mRecordingStatus = -1;
+        mRecordingEnabled = false;
     }
 
     SurfaceHolder.Callback mCallback = new SurfaceHolder.Callback() {
@@ -79,6 +105,13 @@ public class MainActivity extends AppCompatActivity {
             mCameraTexture.setOnFrameAvailableListener(mFrameAvailableListener);
 
             mCamera.startPreview(mCameraTexture);
+
+            mRecordingEnabled = sVideoEncoder.isRecording();
+            if (mRecordingEnabled) {
+                mRecordingStatus = RECORDING_RESUMED;
+            } else {
+                mRecordingStatus = RECORDING_OFF;
+            }
         }
 
         @Override
@@ -172,7 +205,48 @@ public class MainActivity extends AppCompatActivity {
         mDisplaySurface.swapBuffers();
 
         // Send it to the video encoder.
+        if (mRecordingEnabled) {
+            switch (mRecordingStatus) {
+                case RECORDING_OFF:
+                    Log.d(TAG, "START recording");
+                    // start recording
+                    sVideoEncoder.startRecording(new TextureMovieEncoder.EncoderConfig(
+                            mOutputFile, 640, 480, 1000000, EGL14.eglGetCurrentContext()));
+                    mRecordingStatus = RECORDING_ON;
+                    break;
+                case RECORDING_RESUMED:
+                    Log.d(TAG, "RESUME recording");
+                    sVideoEncoder.updateSharedContext(EGL14.eglGetCurrentContext());
+                    mRecordingStatus = RECORDING_ON;
+                    break;
+                case RECORDING_ON:
+                    // yay
+                    break;
+                default:
+                    throw new RuntimeException("unknown status " + mRecordingStatus);
+            }
+        } else {
+            switch (mRecordingStatus) {
+                case RECORDING_ON:
+                case RECORDING_RESUMED:
+                    // stop recording
+                    Log.d(TAG, "STOP recording");
+                    sVideoEncoder.stopRecording();
+                    mRecordingStatus = RECORDING_OFF;
+                    break;
+                case RECORDING_OFF:
+                    // yay
+                    break;
+                default:
+                    throw new RuntimeException("unknown status " + mRecordingStatus);
+            }
+        }
 
+        sVideoEncoder.setTextureId(mTextureId);
+
+        // Tell the video encoder thread that a new frame is available.
+        // This will be ignored if we're not actually recording.
+        sVideoEncoder.frameAvailable(mCameraTexture);
     }
 
 
@@ -180,5 +254,21 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         MainActivityPermissionsDispatcher.onRequestPermissionsResult(this, requestCode, grantResults);
+    }
+
+    public void changeRecordingState(boolean isRecording) {
+        Log.d(TAG, "changeRecordingState: was " + mRecordingEnabled + " now " + isRecording);
+        mRecordingEnabled = isRecording;
+    }
+
+    @OnClick(R.id.btn_toggle)
+    public void clickToggleRecording(@SuppressWarnings("unused") View unused) {
+        mRecordingEnabled = !mRecordingEnabled;
+        updateControls();
+    }
+
+    private void updateControls() {
+        String text = mRecordingEnabled ? "停止录制" : "开始录制";
+        mToggleBtn.setText(text);
     }
 }
